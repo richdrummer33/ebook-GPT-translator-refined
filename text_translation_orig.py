@@ -12,11 +12,8 @@ from ebooklib import epub
 import os
 import tempfile
 import shutil
-import time
 from bs4 import BeautifulSoup
 import configparser
-from datetime import datetime
-from pytz import timezone
 from pdfminer.pdfdocument import PDFDocument
 from pdfminer.pdfparser import PDFParser
 from pdfminer.pdfinterp import PDFResourceManager, PDFPageInterpreter
@@ -32,6 +29,7 @@ from lxml import etree
 from docx import Document
 import mobi
 import pandas as pd
+
 
 def get_docx_title(docx_filename):
     with zipfile.ZipFile(docx_filename) as zf:
@@ -128,11 +126,10 @@ with open('settings.cfg', encoding=encoding) as f:
     config.read_string(config_text)
 
 # 获取openai_apikey和language
-openai_apikey = os.getenv("OPENAI_API_KEY") # config.get('option', 'openai-apikey')
+openai_apikey = os.getenv("OPENAI_API_KEY")
 # language_name = config.get('option', 'target-language')
 prompt = config.get('option', 'prompt')
 bilingual_output = config.get('option', 'bilingual-output')
-reformat = False # config.get('option', 'reformat') # RB added
 language_code = config.get('option', 'langcode')
 api_proxy=config.get('option', 'openai-proxy')
 # Get startpage and endpage as integers with default values
@@ -142,8 +139,6 @@ endpage = config.getint('option', 'endpage', fallback=-1)
 transliteration_list_file = config.get('option', 'transliteration-list')
 # 译名表替换是否开启大小写匹配？
 case_matching = config.get('option', 'case-matching')
-# If want to print translations to console in realtime
-print_translations = False
 
 # 设置openai的API密钥
 openai.api_key = openai_apikey
@@ -154,7 +149,7 @@ key_array = openai_apikey.split(',')
 def random_api_key():
     return random.choice(key_array)
 
-def create_chat_completion(prompt, text, model="gpt-4", **kwargs):
+def create_chat_completion(prompt, text, model="gpt-3.5-turbo", **kwargs):
     openai.api_key = random_api_key()
     return openai.ChatCompletion.create(
         model=model,
@@ -195,10 +190,8 @@ jsonfile = base_filename + "_process.json"
 translated_dict = {}
 try:
     with open(jsonfile, "r", encoding="utf-8") as f:
-        print("Loading translated text from " + jsonfile)
         translated_dict = json.load(f)
 except FileNotFoundError:
-    print("File Not found")
     pass
 
 
@@ -227,148 +220,37 @@ def convert_epub_to_text(epub_filename):
     # 返回文本
     return text
 
-def convert_EPUB_to_DOC(self, epub_filename, outfile):
-        path_infile = self.dataDir + infile
 
-        options = aw.loading.EpubLoadOptions()
-
-        # Open EPUB document
-
-        document = Document(path_infile, options)
-
-        option = DocSaveOptions()
-        option.Format = DocSaveOptions.DocFormat.DocX
-
-        # Save the file into MS Word document format
-
-        document.Save(path_outfile, option)
-        print(infile + " converted into " + outfile)
-
-# RB replaces text_to_epub to preserve original epub formatting
-def merge_to_new_epub(original_book, translated_dict, new_filename, language_code='en', title="Title"):
-    # Create a new epub book
-    new_book = epub.EpubBook()
-
-    # Step 1: Extract original metadata and contents
-    # Metadata
-    new_book.set_identifier(original_book.get_metadata('DC', 'identifier')[0][0])
-    new_book.set_title(title)
-    new_book.set_language(original_book.language)
-
-    cover_page = ebooklib.epub.EpubCoverHtml(title='Cover', file_name='cover.xhtml')
-    cover_page.content = '<your HTML content here>'
-
-    # Cover Image (if available)
-    # cover_item = original_book.get_cover_item()
-    # if cover_item:
-    #     new_book.set_cover("image.jpg", cover_item.content)
-    #     print("Applied cover image")
-    
-    # Initialize new table of contents and spine
-    new_toc = []
-    new_spine = ['nav']
-    
-    # Get original table of contents (TOC)
-    # original_toc = original_book.get_items_of_type(ebooklib.ITEM_NAVIGATION) # original_toc = original_book.toc
-
-    # No need for new_toc or new_spine as separate lists
-    # Simply copy over the original TOC and spine
-    new_book.toc = original_book.toc
-    new_book.spine = original_book.spine
-
-    # Loop through all the items in the original book
-    for item in original_book.get_items():
-        # Check if the item is a document (i.e., a chapter or section)
-        if item.get_type() == ebooklib.ITEM_DOCUMENT:
-            chapter_content = item.content.decode('utf-8').strip()  # Decoding and stripping leading/trailing white spaces
-
-            chapter_title = item.title if item.title else "Unknown Title"
-            print(f"Found chapter: {chapter_title}")
-
-            # Create a new chapter with translated content, falling back to original if not found
-            translated_content = translated_dict.get(chapter_content, chapter_content)
-
-            new_chapter = ebooklib.epub.EpubHtml(title=chapter_title, content=translated_content, lang=language_code)
-            new_chapter.content = translated_content.encode('utf-8')  # Make sure to encode back to bytes
-
-            # Add new chapter to the book
-            new_book.add_item(new_chapter)
-
-
-    # Write out new ePub file
-    ebooklib.epub.write_epub(new_filename, new_book)
-
-# RB wrote to try fix formatting issues
-def text_to_epub(original_book, text, filename, language_code='en', title="Title"):
-    print("Writing translated text to epub \n" + filename)
-
-    # text = text.replace("\n", "<br>") # USING CSS NAO
-
+def text_to_epub(text, filename, language_code='en', title="Title"):
+    text = text.replace("\n", "<br>")
     # 创建epub书籍对象
-    new_book = epub.EpubBook()
+    book = epub.EpubBook()
 
     # 设置元数据
-    new_book.set_identifier(str(random.randint(100000, 999999)))
-    new_book.set_title(title)
-    new_book.set_language(language_code)
+    book.set_identifier(str(random.randint(100000, 999999)))
+    book.set_title(title)
+    book.set_language(language_code)
 
-    # Create CSS style for paragraph spacing
-    css_style = '''
-    @namespace epub "http://www.idpf.org/2007/ops";
-    body {
-        font-family: Arial, sans-serif;
-    }
-    p {
-        text-align: justify;
-        margin-bottom: 1.5em;
-    }
-    '''
-    default_css = epub.EpubItem(uid="style_default", file_name="style/default.css", media_type="text/css", content=css_style)
-    # apply css styling across the content of the new_book
-    new_book.add_item(default_css)
-
-    # Create chapter
-    chapter1 = epub.EpubHtml(title='Chapter 1', file_name='chap_1.xhtml', lang=language_code)
-    chapter1.content = '<html><head><link rel="stylesheet" type="text/css" href="style/default.css" /></head><body>' + text + '</body></html>'
+    # 创建章节对象
+    c = epub.EpubHtml(title='Chapter 1', file_name='chap_1.xhtml', lang=language_code)
+    c.content = text
 
     # 将章节添加到书籍中
-    new_book.add_item(chapter1)
+    book.add_item(c)
 
     # 添加toc
-    new_book.toc = (epub.Link('chap_1.xhtml', 'Chapter 1', 'chap_1'),)
+    book.toc = (epub.Link('chap_1.xhtml', 'Chapter 1', 'chap_1'),)
     # 设置书脊顺序
-    new_book.spine = ['nav', chapter1]
-
+    book.spine = ['nav', c]
     # 添加导航
-    new_book.add_item(epub.EpubNcx())
-    new_book.add_item(epub.EpubNav())
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
 
+    # 设置书籍封面
+    # book.set_cover('image.jpg', open('image.jpg', 'rb').read())
 
-    # COVER COPY 
-    # OG: new_book.set_cover('image.jpg', open('image.jpg', 'rb').read())
-    # Get the cover item from the original book
-    # Look for the cover item in the original book
-    cover_item = None
-    for item in original_book.get_items():
-        if item.get_type() == ebooklib.ITEM_COVER:
-            cover_item = item
-            break
-
-    # If a cover item is found, copy it to the new book
-    if cover_item:
-        # Create a new EpubCover item for the new book
-        new_cover_item = ebooklib.epub.EpubCover(
-            uid='cover-img',
-            file_name=cover_item.file_name  # you can give a new name if you like
-        )
-        new_cover_item.content = cover_item.content
-
-        # Add the new cover item to the new book
-        new_book.add_item(new_cover_item)
-
-
-    # Final step: write out the new book
-    epub.write_epub(filename, new_book, {})
+    # 将书籍写入文件
+    epub.write_epub(filename, book, {})
 
 
 # 将PDF文件转换为文本
@@ -416,7 +298,7 @@ def split_text(text):
 
 # 将句号替换为句号+回车
 def return_text(text):
-    # text = text.replace(". ", ".\n")
+    text = text.replace(". ", ".\n")
     text = text.replace("。", "。\n")
     text = text.replace("！", "！\n")
     return text
@@ -465,18 +347,15 @@ def translate_text(text):
 
 
 def translate_and_store(text):
-    # print("Translating text: " + text)
-    # If the text has already been translated, directly return the translation result
+    # 如果文本已经翻译过，直接返回翻译结果
     if text in translated_dict:
         return translated_dict[text]
-    
-    ##########################################################
-    # TRANSLATING THE TEXT HERE
-    ##########################################################
+
+    # 否则，调用 translate_text 函数进行翻译，并将结果存储在字典中
     translated_text = translate_text(text)
     translated_dict[text] = translated_text
 
-    # Save the dictionary as a JSON file
+    # 将字典保存为 JSON 文件
     with open(jsonfile, "w", encoding="utf-8") as f:
         json.dump(translated_dict, f, ensure_ascii=False, indent=4)
 
@@ -515,18 +394,15 @@ if filename.endswith('.pdf'):
         for i in range(10):
             text = convert_pdf_to_text(filename, startpage, endpage)
             pbar.update(1)
-
 elif filename.endswith('.epub'):
     print("Converting epub to text")
     book = epub.read_epub(filename)
-
 elif filename.endswith('.txt'):
 
     with open(filename, 'r', encoding='utf-8') as file:
         text = file.read()
 
     title = os.path.basename(filename)
-
 elif filename.endswith('.docx'):
     print("Converting DOCX file to text")
     title = get_docx_title(filename)
@@ -545,177 +421,74 @@ elif filename.endswith('.mobi'):
 else:
     print("Unsupported file type")
 
-# RB added
-if reformat: 
-    print(">>> Reformatting text <<<")
-
-    with tqdm(total=4, desc="Processing and Writing EPUB") as pbar:
-        # Step 1: Read the JSON file
-        with open("book_process.json", 'r', encoding='utf-8') as f:
-            translated_dict = json.load(f)
-        pbar.update(1)
-
-        # Step 2: Assume the translated text is the values in the dictionary
-        # Split each value by \n and wrap each resulting string in <p> tags
-        reformatted_text = ""
-        for paragraph in translated_dict.values():
-            lines = paragraph.split('\n')
-            reformatted_text += "".join([f"<p>{line}</p>" for line in lines])
-        pbar.update(1)
-
-        # Step 3: Create EPUB
-        book = epub.EpubBook()
-        book.set_identifier(str(random.randint(100000, 999999)))
-        book.set_title("PeregrinosEncuentros en el Camino de Santiago")
-        book.set_language(language_code)
-
-        c = epub.EpubHtml(title='Translated Chapter', file_name='chap_translated.xhtml', lang=language_code)
-        c.content = reformatted_text
-        book.add_item(c)
-
-        # Append the new chapter to the existing TOC and spine
-        book.toc.append(epub.Link('chap_translated.xhtml', 'Translated Chapter', 'chap_translated'))
-        book.spine.append(c)
-        
-        book.add_item(epub.EpubNcx())
-        book.add_item(epub.EpubNav())
-
-        epub.write_epub(new_filename, book, {})
-        pbar.update(1)
-
-# Gets data as a "book" for epub, or as string format for other file types
-if filename.endswith('.pdf'):
-    title = get_pdf_title(filename)
-    with tqdm(total=10, desc="Converting PDF to text") as pbar:
-        for i in range(10):
-            text = convert_pdf_to_text(filename, startpage, endpage)
-            pbar.update(1)
-
-elif filename.endswith('.epub'):
-    book = epub.read_epub(filename)
-    title = get_epub_title(filename)
-    print ("Epub Title: " + title)
-    print("\nConverted epub to text as a 'book'")
-    input("Press Enter to continue...")
-
-
-elif filename.endswith('.txt'):
-    with open(filename, 'r', encoding='utf-8') as file:
-        text = file.read()
-    title = os.path.basename(filename)
-
-elif filename.endswith('.docx'):
-    print("Converting DOCX file to text")
-    title = get_docx_title(filename)
-    with tqdm(total=10, desc="Converting DOCX to text") as pbar:
-        for i in range(10):
-            text = convert_docx_to_text(filename)
-            pbar.update(1)
-
-elif filename.endswith('.mobi'):
-    print("Converting MOBI file to text")
-    title = get_mobi_title(filename)
-    with tqdm(total=10, desc="Converting MOBI to text") as pbar:
-        for i in range(10):
-            text = convert_mobi_to_text(filename)
-            pbar.update(1)
-
-else:
-    print("Unsupported file type")
-
-img_html_added = False
-
-import re
-
-# Peform the translation
 if filename.endswith('.epub'):
-    print("\nTranslating epub book")
-    #print First translated sentence from the json file
-    if translated_dict.__len__() > 0:
-        print("\t(First translated sentence) " + translated_dict[list(translated_dict.keys())[0]])
-        print("\t(Last translated sentence) " + translated_dict[list(translated_dict.keys())[-1]])
-    input("Press Enter to continue...")
-
     # 获取所有章节
     items = book.get_items()
 
     # 遍历所有章节
     translated_all = ''
     count = 0
-
     for item in tqdm(items):
+        # 如果章节类型为文档类型，则需要翻译
         if item.get_type() == ebooklib.ITEM_DOCUMENT:
-
-            # Data structure for parsed html or xml
+            # 使用BeautifulSoup提取原文本
             soup = BeautifulSoup(item.get_content(), 'html.parser')
             text = soup.get_text().strip()
             img_html = ''
             img_tags = soup.find_all('img')
-
-             # html tags for images in this chapter
             for img_tag in img_tags:
                 img_html += str(img_tag) + '<br>'
-                
-            if not text: # ... its not text dumb dumb
+            # 如果原文本为空，则跳过
+            if not text:
                 continue
+            # 将所有回车替换为空格
+            text = text.replace("\n", " ")
 
-            # remove extra spaces
+            # 将多个空格替换为一个空格
+            import re
+
             text = re.sub(r"\s+", " ", text)
 
-            # transliterate the text if it is not in the translated_dict
+            # 如果设置了译名表替换，则对文本进行翻译前的替换
             if args.tlist:
                 text = text_replace(text, transliteration_list_file, case_matching)
 
-            # split the text into a "short text" list
+            # 将文本分成不大于1024字符的短文本list
             short_text_list = split_text(text)
-
-            # RB save the short_text_list to a new raw tex file
-            with open("raw_text.txt", "w", encoding="utf-8") as f:
-                f.write(text)
-                
             if args.test:
                 short_text_list = short_text_list[:3]
 
+            # 初始化翻译后的文本
             translated_text = ""
 
-            # unformatted translated text with all tags in the string
-            unformatted_translated_text = ""
-
-            # TRAVERSE THE LIST OF SHORT TEXTS, TRANSLATING EACH SHORT TEXT IN TURN
+            # 遍历短文本列表，依次翻译每个短文本
             for short_text in tqdm(short_text_list):
+                print(return_text(short_text))
                 count += 1
-
+                # 翻译当前短文本
                 translated_short_text = translate_and_store(short_text)
                 short_text = return_text(short_text)
-                unformatted_translated_text = translated_short_text
                 translated_short_text = return_text(translated_short_text)
-
+                # 将当前短文本和翻译后的文本加入总文本中
                 if bilingual_output.lower() == 'true':
                     translated_text += f"{short_text}<br>\n{translated_short_text}<br>\n"
                 else:
                     translated_text += f"{translated_short_text}<br>\n"
-            
+                # print(short_text)
+                print(translated_short_text)
+            # 使用翻译后的文本替换原有的章节内容
             item.set_content((img_html + translated_text.replace('\n', '<br>')).encode('utf-8'))
-
-            # print translation to screen
-            print("Translated segment!")
-            print("\033[95m\nSpanish: " + short_text + "..." + "033[0m")
-            print("\033[93m\mEnglish: " + translated_short_text + "..." + "\n\033[0m")
-
-            # add the translated text to the overall translated text
             translated_all += translated_text
             if args.test and count >= 3:
                 break
 
-    # SAVE TO FILE!
+    # 将epub书籍写入文件
     epub.write_epub(new_filename, book, {})
+    # 将翻译后的文本同时写入txt文件 in case epub插件出问题
     with open(new_filenametxt, "w", encoding="utf-8") as f:
         f.write(translated_all)
 
 else:
-    print("\n(NOT epub) Processing escape characters, removing exra spaces, performing transliterations/lang replacements, splitting text")
-    input("Press Enter to continue...")
-
     # 将所有回车替换为空格
     text = text.replace("\n", " ")
 
@@ -730,23 +503,19 @@ else:
 
     # 将文本分成不大于1024字符的短文本list
     short_text_list = split_text(text)
-    # dump the short_text_list to a new raw tex file
-    with open("raw_text.txt", "w", encoding="utf-8") as f:
-        f.write(text)
-   
     if args.test:
         short_text_list = short_text_list[:3]
     # 初始化翻译后的文本
     translated_text = ""
 
-    # Traverse the list of short texts, translating each short text in turn
+    # 遍历短文本列表，依次翻译每个短文本
     for short_text in tqdm(short_text_list):
         print(return_text(short_text))
-        # Translate the current short text
+        # 翻译当前短文本
         translated_short_text = translate_and_store(short_text)
         short_text = return_text(short_text)
         translated_short_text = return_text(translated_short_text)
-        # Add the current short text and its translation to the overall text
+        # 将当前短文本和翻译后的文本加入总文本中
         if bilingual_output.lower() == 'true':
             translated_text += f"{short_text}\n{translated_short_text}\n"
         else:
@@ -754,76 +523,19 @@ else:
         # print(short_text)
         print(translated_short_text)
 
-def generate_line(length):
-    return ''.join(random.choice(characters) for _ in range(length))
-def funky_finalizer(duration = 3):
-    import random
+    # 将翻译后的文本写入epub文件
+    with tqdm(total=10, desc="Writing translated text to epub") as pbar:
+        text_to_epub(translated_text.replace('\n', '<br>'), new_filename, language_code, title)
+        pbar.update(1)
 
-    # Characters to use
-    characters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-=_+[]{}|;':,.<>/?`~"
-
-    lines = [generate_line(line_length) for _ in range(num_lines)]
-    start_time = time.time()
-    while True:
-        current_time = time.time()
-        if current_time - start_time >= duration:
-            break
-        # Print the lines
-        for line in lines:
-            print(line)
-        
-        # Update a random line to create the scrolling effect
-        lines[random.randint(0, num_lines-1)] = generate_line(line_length)
-        
-        # Delay
-        time.sleep(0.1)
-        
-        # Clear the console screen
-        print("\033c", end="")
-
-    # Display the cryptic message
-    print(">> Data stream ciphered and archived to matrix_data.epub")
-    print(">> WARNING: Disclosure of this data will rupture the digital mainframe, proceed with extreme caution.")
-
-    if __name__ == "__main__":
-        matrix_effect()
-
-
-funky_finalizer()
-
-# Write the translated text to a TXT file as well, in case there are issues with the EPUB plugin
-with open(new_filenametxt, "w", encoding="utf-8") as f:
-    f.write(translated_text)
-
+    # 将翻译后的文本同时写入txt文件 in case epub插件出问题
+    with open(new_filenametxt, "w", encoding="utf-8") as f:
+        f.write(translated_text)
 cost = cost_tokens / 1000 * 0.002
 print(f"Translation completed. Total cost: {cost_tokens} tokens, ${cost}.")
 
-# Get human-readable time string in EST for saving the backup files
-eastern = timezone('US/Eastern')
-utc_time = datetime.now(timezone('UTC'))
-est_time = utc_time.astimezone(eastern)
-time_string_est = est_time.strftime("-%Y-%m-%d-%H-%M-%S")
-
-# Backup the JSON file
 try:
-    # copy the json and append human readable date/time in current timzeone to the filename
-    copy = shutil.copy(jsonfile, jsonfile + time_string_est)
-    # move the duplicate json to folder
-    shutil.move(copy, "Processed Jsons")
-    # print the success message
-    print(f"File '{jsonfile}' has been backed up to the 'Processed Jsons' folder.")
+    os.remove(jsonfile)
+    print(f"File '{jsonfile}' has been deleted.")
 except FileNotFoundError:
-    print(f"File '{jsonfile}' not found, or backup folder 'Processed Jsons' does not exist. Backup failed.")
-
-# Backup the epub file
-try:
-    # copy the epub and append human readable date/time in current timzeone to the filename
-    copy = shutil.copy(new_filename, new_filename + time_string_est)
-    # move the duplicate epub to folder
-    shutil.move(copy, "Translated Epubs")
-    # print the success message
-    print(f"File '{new_filename}' has been backed up to the 'Translated Epubs' folder.")
-except FileNotFoundError:
-    print(f"File '{new_filename}' not found, or backup folder 'Translated Epubs' does not exist. Backup failed.")
-
-print("\nAll done! Enjoy your translated book!")
+    print(f"File '{jsonfile}' not found. No file was deleted.")

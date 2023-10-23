@@ -2,6 +2,12 @@
 *.pdf
 *.epub
 *.txt
+translated_dict.json
+/Translated Epubs
+/Processed Jsons
+/ebook Reader
+/Copies
+/sumatrapdfcache
 !requirements.txt
 
 # config
